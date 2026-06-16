@@ -1,0 +1,136 @@
+# Erlang Learn Notes
+
+## Goal
+
+Learn enough Erlang to understand Cowboy WebSocket servers.
+
+---
+
+## Module
+
+File:
+
+```erlang
+-module(hello).
+
+-export([start/0]).
+
+start() ->
+    io:format("Hello from Erlang!~n").
+```
+
+Compile:
+
+```erlang
+c(hello).
+```
+
+Run:
+
+```erlang
+hello:start().
+```
+
+---
+
+## Process Creation
+
+```erlang
+-module(hello).
+
+-export([start/0]).
+
+start() ->
+    spawn(fun() ->
+        io:format("I am a process!~n")
+    end).
+```
+
+Run:
+
+```erlang
+Pid = hello:start().
+```
+
+Output:
+
+```text
+I am a process!
+<0.xxx.0>
+```
+
+---
+
+## Message Passing
+
+```erlang
+-module(hello).
+
+-export([start/0]).
+
+start() ->
+    spawn(fun loop/0).
+
+loop() ->
+    receive
+        Msg ->
+            io:format("Got message: ~p~n", [Msg]),
+            loop()
+    end.
+```
+
+Compile:
+
+```erlang
+c(hello).
+```
+
+Run:
+
+```erlang
+Pid = hello:start().
+Pid ! hello.
+Pid ! world.
+Pid ! 123.
+```
+
+Output:
+
+```text
+Got message: hello
+Got message: world
+Got message: 123
+```
+
+---
+
+## Concepts Learned
+
+* Module
+* Exported Function
+* Process Creation
+* Message Passing
+* Receive Loop
+* Pattern Matching Basics
+
+---
+
+## Useful Commands
+
+Start Erlang:
+
+```bash
+erl
+```
+
+Compile:
+
+```erlang
+c(ModuleName).
+```
+
+Exit:
+
+```erlang
+q().
+```
