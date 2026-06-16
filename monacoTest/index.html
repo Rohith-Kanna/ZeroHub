@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Monaco Test</title>
+
+    <style>
+        html, body, #editor {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+        }
+    </style>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs/loader.min.js"></script>
+</head>
+<body>
+
+<div id="editor"></div>
+
+<script>
+require.config({
+    paths: {
+        vs: "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs"
+    }
+});
+
+require(["vs/editor/editor.main"], function () {
+    const editor = monaco.editor.create(
+        document.getElementById("editor"),
+        {
+            value: "// Monaco Works!",
+            language: "javascript",
+            theme: "vs-dark"
+        }
+    );
+    editor.onDidChangeModelContent(() => {
+    const text = editor.getValue();
+
+    window.ytext.delete(0, window.ytext.length);
+    window.ytext.insert(0, text);
+});
+});
+</script>
+<script type="module">
+
+import * as Y from "https://esm.sh/yjs";
+
+const ydoc = new Y.Doc();
+const ytext = ydoc.getText("monaco");
+
+window.ytext = ytext;
+
+console.log("Yjs Ready");
+
+ytext.observe(() => {
+    console.log("Yjs Content:", ytext.toString());
+});
+
+</script>
+
+</body>
+</html>
