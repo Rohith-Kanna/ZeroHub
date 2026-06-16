@@ -1,0 +1,27 @@
+What You're Building
+Browser-based code editor. Two people share a room code → edit same code live → no server stores the code.
+
+How It Works
+Person A types → CRDT converts to "change packet" 
+→ Erlang sends it to Person B 
+→ Person B's screen updates instantly
+
+Each Part's Job
+Monaco Editor — the code editor UI (same as VS Code)
+Yjs (CRDT) — makes simultaneous editing conflict-free
+Erlang — relays messages between peers, handles crashes
+Mnesia — stores session state (built into Erlang, no external DB)
+Firebase — generates room code, connects peers, then exits
+Lua — users can add plugins/scripts to the editor
+Cloud Run — backup relay if college WiFi blocks direct connection
+
+Online vs Offline
+Same WiFi → pure LAN, zero internet, Erlang finds peers by local IP
+Different networks → Firebase connects them once, then drops out
+
+Your 2 Day Split
+You → Erlang server + Firebase room codes
+Friend → Monaco editor + Yjs sync + UI
+
+One Line Pitch
+"Google Docs for code — but your code never touches a server."You said: project name ideas
