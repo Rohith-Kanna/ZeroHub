@@ -31,7 +31,16 @@ init([]) ->
         intensity => 0,
         period => 1
     },
-    ChildSpecs = [],
+    ChildSpecs = [
+        #{
+            id => room_manager,
+            start => {room_manager, start_link, []},
+            restart => permanent,
+            shutdown => 5000,
+            type => worker,
+            modules => [room_manager]
+        }
+    ],
     {ok, {SupFlags, ChildSpecs}}.
 
 %% internal functions

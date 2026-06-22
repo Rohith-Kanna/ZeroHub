@@ -22,7 +22,8 @@ start(_StartType, _StartArgs) ->
         [{port, 8080}],
         #{env => #{dispatch => Dispatch}}
     ),
-
+    client_registry:start(),
+    
     zerohub_backend_sup:start_link().
 
 stop(_State) ->
