@@ -430,6 +430,33 @@ statusbar {
 ::-webkit-scrollbar-thumb:hover {
     background: #444;
 }
+
+.btn-clean:disabled, .btn-accent:disabled, .input-clean:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+    .main-container {
+        flex-direction: column;
+    }
+    .left-sidebar {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid var(--border-subtle);
+        padding: 10px;
+        gap: 10px;
+    }
+    .right-sidebar {
+        width: 100%;
+        border-left: none;
+        border-top: 1px solid var(--border-subtle);
+        height: 150px;
+    }
+    .collaborators-section {
+        padding: 10px;
+    }
+}
 </style>
 
 <!-- Monaco Loader -->
@@ -540,12 +567,66 @@ let pingInterval = null;
 let lastPingTime = 0;
 let latency = 0;
 
+// Validation functions
+function validateUsername(name) {
+    if (!name) return 'Anonymous';
+    const trimmed = name.trim();
+    if (trimmed.length === 0) return 'Anonymous';
+    return trimmed.substring(0, 20);
+}
+
+function validateRoomCode(code) {
+    if (!code) {
+        return { valid: false, reason: "Room code cannot be empty" };
+    }
+    const trimmed = code.trim();
+    if (trimmed.length === 0) {
+        return { valid: false, reason: "Room code cannot be only whitespace" };
+    }
+    if (trimmed.length < 3 || trimmed.length > 20) {
+        return { valid: false, reason: "Room code must be between 3 and 20 characters" };
+    }
+    const regex = /^[a-zA-Z0-9-_]+$/;
+    if (!regex.test(trimmed)) {
+        return { valid: false, reason: "Room code can only contain alphanumeric characters, dashes, and underscores" };
+    }
+    return { valid: true, code: trimmed };
+}
+
 // State management
 let currentRoomId = null;
 let myColor = '#39ff14';
 let myClientId = null;
-let username = sessionStorage.getItem('zerohub_username') || '';
+let username = validateUsername(sessionStorage.getItem('zerohub_username'));
+sessionStorage.setItem('zerohub_username', username);
 document.getElementById('usernameInput').value = username;
+
+let isReconnecting = false;
+let reconnectTimeout = null;
+let joinTimeout = null;
+let isRoomActionPending = false;
+
+function setRoomActionState(pending) {
+    isRoomActionPending = pending;
+    const createBtn = document.getElementById('createRoomBtn');
+    const joinBtn = document.getElementById('joinRoomBtn');
+    const roomInput = document.getElementById('roomInput');
+    
+    if (pending) {
+        if (createBtn) createBtn.disabled = true;
+        if (joinBtn) joinBtn.disabled = true;
+        if (roomInput) roomInput.disabled = true;
+        if (createBtn) createBtn.textContent = 'CREATING...';
+        if (joinBtn) joinBtn.textContent = 'JOINING...';
+    } else {
+        if (createBtn) createBtn.disabled = false;
+        if (joinBtn) joinBtn.disabled = false;
+        if (roomInput) roomInput.disabled = false;
+        if (createBtn) createBtn.textContent = 'CREATE ROOM';
+        if (joinBtn) joinBtn.textContent = 'JOIN';
+    }
+}
+
 
 // Remote collaborator mappings & states
 let remoteCursors = {}; // clientId -> { line, column, username, color, decorationId }
@@ -701,7 +782,12 @@ function renderFirebaseRooms(roomsData) {
 }
 
 // Mock Local fallback database (for offline usage)
-let mockActiveRooms = JSON.parse(localStorage.getItem('zerohub_rooms') || '{}');
+let mockActiveRooms = {};
+try {
+    mockActiveRooms = JSON.parse(localStorage.getItem('zerohub_rooms') || '{}');
+} catch (e) {
+    mockActiveRooms = {};
+}
 initFirebase();
 
 // Initialize Monaco require path
@@ -792,12 +878,16 @@ require(['vs/editor/editor.main'], function() {
     // Handle document updates
     doc.on('update', (update, origin) => {
         if (origin !== 'remote') {
-            const base64Update = uint8ArrayToBase64(update);
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    type: 'yjs_update',
-                    update: base64Update
-                }));
+            try {
+                const base64Update = uint8ArrayToBase64(update);
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: 'yjs_update',
+                        update: base64Update
+                    }));
+                }
+            } catch (e) {
+                console.error("Yjs update dispatch error:", e);
             }
         }
     });
@@ -813,73 +903,129 @@ function connectWebSocket() {
     if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
         return;
     }
+    
+    if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
+    }
 
     const statusDot = document.getElementById('statusDot');
     const sbConnection = document.getElementById('sbConnection');
     
-    statusDot.className = 'status-dot connecting';
-    sbConnection.textContent = 'CONNECTING';
+    if (isReconnecting) {
+        if (statusDot) statusDot.className = 'status-dot connecting';
+        if (sbConnection) sbConnection.textContent = 'RECONNECTING';
+    } else {
+        if (statusDot) statusDot.className = 'status-dot connecting';
+        if (sbConnection) sbConnection.textContent = 'CONNECTING';
+    }
     
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsHost = window.location.hostname || 'localhost';
-    ws = new WebSocket(`${wsProtocol}//${wsHost}:8080/ws`);
-    
-    ws.onopen = () => {
-        statusDot.className = 'status-dot connected';
-        sbConnection.textContent = 'CONNECTED';
-        logActivity('SYS', 'Connected to session router');
+    try {
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsHost = window.location.hostname || 'localhost';
+        ws = new WebSocket(`${wsProtocol}//${wsHost}:8080/ws`);
         
-        // Start ping diagnostic interval
-        if (pingInterval) clearInterval(pingInterval);
-        pingInterval = setInterval(sendPing, 4000);
+        ws.onopen = () => {
+            isReconnecting = false;
+            if (statusDot) {
+                statusDot.className = 'status-dot connected';
+            }
+            if (sbConnection) sbConnection.textContent = 'CONNECTED';
+            logActivity('SYS', 'Connected to session router');
+            
+            // Start ping diagnostic interval
+            if (pingInterval) clearInterval(pingInterval);
+            pingInterval = setInterval(sendPing, 4000);
+            
+            // Re-join room if we had one
+            if (currentRoomId) {
+                const validation = validateRoomCode(currentRoomId);
+                if (validation.valid) {
+                    joinRoom(validation.code);
+                }
+            }
+            
+            // Initialize Firebase Discovery mock
+            refreshDiscoveryList();
+        };
         
-        // Re-join room if we had one
-        if (currentRoomId) {
-            joinRoom(currentRoomId);
+        ws.onclose = () => {
+            if (statusDot) {
+                statusDot.className = 'status-dot disconnected';
+            }
+            if (sbConnection) sbConnection.textContent = 'DISCONNECTED';
+            logActivity('SYS', 'Server offline. Reconnecting...');
+            clearInterval(pingInterval);
+            const latencyDiag = document.getElementById('diagnosticLatency');
+            if (latencyDiag) latencyDiag.textContent = '(--ms)';
+            
+            isReconnecting = true;
+            if (!reconnectTimeout) {
+                reconnectTimeout = setTimeout(connectWebSocket, 3000);
+            }
+        };
+        
+        ws.onerror = (err) => {
+            console.warn("WebSocket connection error:", err);
+        };
+        
+        ws.onmessage = (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+                handleWebSocketMessage(msg);
+            } catch (e) {
+                console.error('Error handling ws raw frame:', e);
+            }
+        };
+    } catch (err) {
+        console.error("Failed to initialize WebSocket connection:", err);
+        if (statusDot) {
+            statusDot.className = 'status-dot disconnected';
         }
-        
-        // Initialize Firebase Discovery mock
-        refreshDiscoveryList();
-    };
-    
-    ws.onclose = () => {
-        statusDot.className = 'status-dot';
-        sbConnection.textContent = 'DISCONNECTED';
-        logActivity('SYS', 'Server offline. Reconnecting...');
-        clearInterval(pingInterval);
-        document.getElementById('diagnosticLatency').textContent = '(--ms)';
-        
-        setTimeout(connectWebSocket, 3000);
-    };
-    
-    ws.onmessage = (event) => {
-        try {
-            const msg = JSON.parse(event.data);
-            handleWebSocketMessage(msg);
-        } catch (e) {
-            console.error('Error handling ws raw frame:', e);
+        if (sbConnection) sbConnection.textContent = 'DISCONNECTED';
+        isReconnecting = true;
+        if (!reconnectTimeout) {
+            reconnectTimeout = setTimeout(connectWebSocket, 3000);
         }
-    };
+    }
 }
 
 function sendPing() {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        lastPingTime = performance.now();
-        ws.send(JSON.stringify({ type: 'ping' }));
+    try {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            lastPingTime = performance.now();
+            ws.send(JSON.stringify({ type: 'ping' }));
+        }
+    } catch (e) {
+        console.warn("Ping send failed:", e);
     }
 }
 
 function handleWebSocketMessage(msg) {
     if (msg.type === 'pong') {
         latency = Math.round(performance.now() - lastPingTime);
-        document.getElementById('diagnosticLatency').textContent = `(${latency}ms)`;
+        const latencyDiag = document.getElementById('diagnosticLatency');
+        if (latencyDiag) latencyDiag.textContent = `(${latency}ms)`;
         return;
     }
     
     switch (msg.type) {
         case 'joined':
+            if (joinTimeout) {
+                clearTimeout(joinTimeout);
+                joinTimeout = null;
+            }
+            setRoomActionState(false);
+            
+            // Clear editor content and reset Yjs doc on switching rooms
             if (currentRoomId && currentRoomId !== msg.roomId) {
                 unregisterFirebaseUser(currentRoomId, myClientId);
+                if (editor && yText) {
+                    remoteUpdate = true;
+                    yText.delete(0, yText.length);
+                    editor.setValue('');
+                    remoteUpdate = false;
+                }
             }
 
             myColor = msg.color;
@@ -887,14 +1033,21 @@ function handleWebSocketMessage(msg) {
             currentRoomId = msg.roomId;
             
             // Display Room
-            document.getElementById('roomCodeDisplay').textContent = currentRoomId;
-            document.getElementById('sbRoom').textContent = `ROOM: ${currentRoomId}`;
-            document.getElementById('copyRoomBtn').style.display = 'block';
+            const codeDisplay = document.getElementById('roomCodeDisplay');
+            if (codeDisplay) codeDisplay.textContent = currentRoomId;
+            const sbRoom = document.getElementById('sbRoom');
+            if (sbRoom) sbRoom.textContent = `ROOM: ${currentRoomId}`;
+            const copyBtn = document.getElementById('copyRoomBtn');
+            if (copyBtn) copyBtn.style.display = 'block';
             
             // Update URL
-            const url = new URL(window.location);
-            url.searchParams.set('room', currentRoomId);
-            window.history.pushState({}, '', url);
+            try {
+                const url = new URL(window.location);
+                url.searchParams.set('room', currentRoomId);
+                window.history.pushState({}, '', url);
+            } catch (e) {
+                console.warn("Could not update URL parameter:", e);
+            }
             
             logActivity('ROOM', `Joined room ${currentRoomId}`);
             
@@ -907,31 +1060,39 @@ function handleWebSocketMessage(msg) {
         case 'yjs_init':
             if (msg.updates && msg.updates.length > 0) {
                 logActivity('YJS', `Syncing document state (${msg.updates.length} updates)...`);
-                doc.transact(() => {
-                    msg.updates.forEach(u => {
-                        const update = base64ToUint8Array(u);
-                        Y.applyUpdate(doc, update, 'remote');
-                    });
-                }, 'remote');
+                try {
+                    doc.transact(() => {
+                        msg.updates.forEach(u => {
+                            const update = base64ToUint8Array(u);
+                            Y.applyUpdate(doc, update, 'remote');
+                        });
+                    }, 'remote');
+                } catch (e) {
+                    console.error("Yjs init apply failed:", e);
+                }
             }
             break;
             
         case 'yjs_update':
-            const update = base64ToUint8Array(msg.update);
             try {
-                const decoded = Y.decodeUpdate(update);
-                if (decoded && decoded.structs && decoded.structs.length > 0) {
-                    const senderYjsId = decoded.structs[0].id.client;
-                    const wsId = yjsToWsClientId[senderYjsId];
-                    if (wsId) {
-                        showTypingIndicator(wsId);
-                        lastActivityTimes[wsId] = Date.now();
+                const update = base64ToUint8Array(msg.update);
+                try {
+                    const decoded = Y.decodeUpdate(update);
+                    if (decoded && decoded.structs && decoded.structs.length > 0) {
+                        const senderYjsId = decoded.structs[0].id.client;
+                        const wsId = yjsToWsClientId[senderYjsId];
+                        if (wsId && wsId !== myClientId) {
+                            showTypingIndicator(wsId);
+                            lastActivityTimes[wsId] = Date.now();
+                        }
                     }
+                } catch (e) {
+                    console.warn("Failed to decode update for typing indicator:", e);
                 }
+                Y.applyUpdate(doc, update, 'remote');
             } catch (e) {
-                console.error("Failed to decode update for typing indicator:", e);
+                console.error("Failed to apply yjs update:", e);
             }
-            Y.applyUpdate(doc, update, 'remote');
             break;
             
         case 'presence_list':
@@ -1141,95 +1302,187 @@ function sendCursorPosition(line, col) {
     }
 }
 
+// Copy Text Utility with secure and fallback methods
+function copyTextToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text);
+    } else {
+        return new Promise((resolve, reject) => {
+            try {
+                const textArea = document.createElement("textarea");
+                textArea.value = text;
+                textArea.style.top = "0";
+                textArea.style.left = "0";
+                textArea.style.position = "fixed";
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                const successful = document.execCommand('copy');
+                document.body.removeChild(textArea);
+                if (successful) {
+                    resolve();
+                } else {
+                    reject(new Error("fallback copy failed"));
+                }
+            } catch (err) {
+                reject(err);
+            }
+        });
+    }
+}
+
 // UI Event Handlers
 function setupUIHandlers() {
     // Alias update
-    document.getElementById('usernameInput').addEventListener('change', e => {
-        username = e.target.value.trim();
-        sessionStorage.setItem('zerohub_username', username);
-        logActivity('SYS', `Alias changed to ${username || 'Anonymous'}`);
-        if (currentRoomId) {
-            joinRoom(currentRoomId);
-        }
-    });
+    const usernameInput = document.getElementById('usernameInput');
+    if (usernameInput) {
+        usernameInput.addEventListener('change', e => {
+            const originalVal = e.target.value;
+            const validated = validateUsername(originalVal);
+            e.target.value = validated;
+            username = validated;
+            sessionStorage.setItem('zerohub_username', username);
+            logActivity('SYS', `Alias set to ${username}`);
+            if (currentRoomId) {
+                const validation = validateRoomCode(currentRoomId);
+                if (validation.valid) {
+                    joinRoom(validation.code);
+                }
+            }
+        });
+    }
     
     // Create Room
-    document.getElementById('createRoomBtn').addEventListener('click', () => {
-        const randCode = Math.floor(100000 + Math.random() * 900000).toString();
-        joinRoom(randCode);
-    });
+    const createBtn = document.getElementById('createRoomBtn');
+    if (createBtn) {
+        createBtn.addEventListener('click', () => {
+            if (isRoomActionPending) return;
+            const randCode = Math.floor(100000 + Math.random() * 900000).toString();
+            joinRoom(randCode);
+        });
+    }
     
     // Join Room
-    document.getElementById('joinRoomBtn').addEventListener('click', () => {
-        const code = document.getElementById('roomInput').value.trim();
-        if (code) {
-            joinRoom(code);
-        }
-    });
+    const joinBtn = document.getElementById('joinRoomBtn');
+    if (joinBtn) {
+        joinBtn.addEventListener('click', () => {
+            if (isRoomActionPending) return;
+            const roomInput = document.getElementById('roomInput');
+            if (roomInput) {
+                const code = roomInput.value.trim();
+                joinRoom(code);
+            }
+        });
+    }
     
     // Copy Link
-    document.getElementById('copyRoomBtn').addEventListener('click', () => {
-        if (!currentRoomId) return;
-        const shareURL = `${window.location.origin}${window.location.pathname}?room=${currentRoomId}`;
-        navigator.clipboard.writeText(shareURL).then(() => {
-            showToast('Share URL copied to clipboard');
-            logActivity('SYS', 'Copied room session URL');
+    const copyBtn = document.getElementById('copyRoomBtn');
+    if (copyBtn) {
+        copyBtn.addEventListener('click', () => {
+            if (!currentRoomId) return;
+            const shareURL = `${window.location.origin}${window.location.pathname}?room=${currentRoomId}`;
+            copyTextToClipboard(shareURL).then(() => {
+                showToast('Share URL copied to clipboard');
+                logActivity('SYS', 'Copied room session URL');
+            }).catch(err => {
+                console.error("Copy failed: ", err);
+                showToast('Failed to copy. Please manually copy the URL.');
+            });
         });
-    });
+    }
     
     // Language Select
-    document.getElementById('languageSelect').addEventListener('change', e => {
-        const lang = e.target.value;
-        if (editor) {
-            const model = editor.getModel();
-            monaco.editor.setModelLanguage(model, lang);
-            document.getElementById('sbLanguage').textContent = lang.toUpperCase();
-            logActivity('SYS', `Language switched to ${lang.toUpperCase()}`);
-        }
-    });
+    const langSelect = document.getElementById('languageSelect');
+    if (langSelect) {
+        langSelect.addEventListener('change', e => {
+            const lang = e.target.value;
+            if (editor) {
+                const model = editor.getModel();
+                monaco.editor.setModelLanguage(model, lang);
+                const sbLanguage = document.getElementById('sbLanguage');
+                if (sbLanguage) sbLanguage.textContent = lang.toUpperCase();
+                logActivity('SYS', `Language switched to ${lang.toUpperCase()}`);
+            }
+        });
+    }
     
     // Theme Select
-    document.getElementById('themeSelect').addEventListener('change', e => {
-        const val = e.target.value;
-        if (editor) {
-            if (val === 'hacker') {
-                monaco.editor.setTheme('hackerTheme');
-                document.body.style.setProperty('--bg-main', '#0a0a0a');
-                document.body.style.setProperty('--bg-panel', '#111111');
-                document.body.style.setProperty('--bg-input', '#181818');
-                document.body.style.setProperty('--border-subtle', '#222222');
-            } else {
-                monaco.editor.setTheme('vs-dark');
-                document.body.style.setProperty('--bg-main', '#1e1e1e');
-                document.body.style.setProperty('--bg-panel', '#252526');
-                document.body.style.setProperty('--bg-input', '#2d2d2d');
-                document.body.style.setProperty('--border-subtle', '#3c3c3c');
+    const themeSelect = document.getElementById('themeSelect');
+    if (themeSelect) {
+        themeSelect.addEventListener('change', e => {
+            const val = e.target.value;
+            if (editor) {
+                if (val === 'hacker') {
+                    monaco.editor.setTheme('hackerTheme');
+                    document.body.style.setProperty('--bg-main', '#0a0a0a');
+                    document.body.style.setProperty('--bg-panel', '#111111');
+                    document.body.style.setProperty('--bg-input', '#181818');
+                    document.body.style.setProperty('--border-subtle', '#222222');
+                } else {
+                    monaco.editor.setTheme('vs-dark');
+                    document.body.style.setProperty('--bg-main', '#1e1e1e');
+                    document.body.style.setProperty('--bg-panel', '#252526');
+                    document.body.style.setProperty('--bg-input', '#2d2d2d');
+                    document.body.style.setProperty('--border-subtle', '#3c3c3c');
+                }
             }
-        }
-    });
+        });
+    }
 }
 
 function joinRoom(roomId) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-        logActivity('ERR', 'No server connection. Retrying...');
-        currentRoomId = roomId;
+    const validation = validateRoomCode(roomId);
+    if (!validation.valid) {
+        showToast(validation.reason);
         return;
     }
     
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        logActivity('ERR', 'No server connection. Retrying...');
+        currentRoomId = validation.code;
+        return;
+    }
+    
+    setRoomActionState(true);
+    if (joinTimeout) clearTimeout(joinTimeout);
+    joinTimeout = setTimeout(() => {
+        setRoomActionState(false);
+        showToast("Join request timed out. Please try again.");
+    }, 6000);
+    
     const activeName = username || 'Anonymous';
-    ws.send(JSON.stringify({
-        type: 'join',
-        roomId: roomId,
-        username: activeName
-    }));
+    try {
+        ws.send(JSON.stringify({
+            type: 'join',
+            roomId: validation.code,
+            username: activeName
+        }));
+    } catch (e) {
+        console.error("Error sending join request:", e);
+        showToast("Failed to send join request. Please retry.");
+        setRoomActionState(false);
+    }
 }
 
 function autoJoinFromURL() {
-    const params = new URLSearchParams(window.location.search);
-    const room = params.get('room');
-    if (room) {
-        document.getElementById('roomInput').value = room;
-        setTimeout(() => joinRoom(room), 500);
+    try {
+        const params = new URLSearchParams(window.location.search);
+        const room = params.get('room');
+        if (room) {
+            const validation = validateRoomCode(room);
+            if (validation.valid) {
+                const roomInput = document.getElementById('roomInput');
+                if (roomInput) roomInput.value = validation.code;
+                setTimeout(() => joinRoom(validation.code), 500);
+            } else {
+                showToast(`Invalid room link: ${validation.reason}`);
+                const url = new URL(window.location);
+                url.searchParams.delete('room');
+                window.history.replaceState({}, '', url);
+            }
+        }
+    } catch (e) {
+        console.warn("autoJoinFromURL failed:", e);
     }
 }
 
