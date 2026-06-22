@@ -561,20 +561,33 @@ let firebaseApp = null;
 let firebaseDB = null;
 let useFirebase = false;
 
+function sanitizeFirebaseKey(key) {
+    if (!key) return '';
+    return key.replace(/[\.\#\$\[\]\/]/g, '_');
+}
+
 async function initFirebase() {
     try {
-        const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js");
-        const { getDatabase, ref, set, onValue, onDisconnect } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js");
+        const { initializeApp } = await import("https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js");
+        const { getDatabase, ref, set, onValue, onDisconnect } = await import("https://www.gstatic.com/firebasejs/12.15.0/firebase-database.js");
 
-        const firebaseConfig = {
-            apiKey: "AIzaSyFakeKeyForZeroHubRTDBDiscovery",
-            authDomain: "zerohub-discovery.firebaseapp.com",
-            databaseURL: "https://zerohub-discovery-default-rtdb.firebaseio.com",
-            projectId: "zerohub-discovery",
-            storageBucket: "zerohub-discovery.appspot.com",
-            messagingSenderId: "1234567890",
-            appId: "1:1234567890:web:abcdef123456"
-        };
+        let firebaseConfig;
+        try {
+            const configModule = await import('./firebase-config.js');
+            firebaseConfig = configModule.firebaseConfig;
+        } catch (e) {
+            console.warn("Could not import firebase-config.js directly (possibly file:// CORS restriction). Using inline fallback credentials.");
+            firebaseConfig = {
+                apiKey: "AIzaSyDD5AtXU82CpLZsC16GGrc7pJA-4RXU2UM",
+                authDomain: "zerohub-dedd7.firebaseapp.com",
+                projectId: "zerohub-dedd7",
+                storageBucket: "zerohub-dedd7.firebasestorage.app",
+                messagingSenderId: "456434218038",
+                appId: "1:456434218038:web:c35e0db92248453289d497",
+                measurementId: "G-7YYHG2E5Z1",
+                databaseURL: "https://zerohub-dedd7-default-rtdb.asia-southeast1.firebasedatabase.app/"
+            };
+        }
 
         firebaseApp = initializeApp(firebaseConfig);
         firebaseDB = getDatabase(firebaseApp);
@@ -586,19 +599,33 @@ async function initFirebase() {
         onValue(roomsRef, (snapshot) => {
             if (snapshot.exists()) {
                 const data = snapshot.val();
-                renderFirebaseRooms(data);
+                
+                // Clean up any empty rooms from RTDB after safety age window
+                import("https://www.gstatic.com/firebasejs/12.15.0/firebase-database.js").then(({ ref, remove }) => {
+                    Object.keys(data).forEach(roomId => {
+                        const age = Date.now() - (data[roomId].createdAt || 0);
+                        if ((!data[roomId].users || Object.keys(data[roomId].users).length === 0) && age > 8000) {
+                            const roomRef = ref(firebaseDB, `active_rooms/${roomId}`);
+                            remove(roomRef).catch(() => {});
+                            delete data[roomId];
+                        }
+                    });
+                    renderFirebaseRooms(data);
+                }).catch(() => {
+                    renderFirebaseRooms(data);
+                });
             } else {
                 renderFirebaseRooms({});
             }
         });
     } catch (e) {
-        console.warn("Firebase failed to load (offline). Fallback to simulated database.");
+        console.warn("Firebase failed to load (offline). Fallback to simulated database.", e);
     }
 }
 
 function publishRoomToFirebase(roomId) {
     if (!useFirebase || !firebaseDB) return;
-    import("https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js").then(({ ref, update }) => {
+    import("https://www.gstatic.com/firebasejs/12.15.0/firebase-database.js").then(({ ref, update }) => {
         const roomRef = ref(firebaseDB, `active_rooms/${roomId}`);
         update(roomRef, {
             roomId: roomId,
@@ -615,8 +642,9 @@ function publishRoomToFirebase(roomId) {
 function registerFirebaseUser(roomId, clientId, userName, userColor) {
     if (!useFirebase || !firebaseDB) return;
     const activeName = userName || 'Anonymous';
-    import("https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js").then(({ ref, set, onDisconnect }) => {
-        const userRef = ref(firebaseDB, `active_rooms/${roomId}/users/${clientId}`);
+    const cleanClientId = sanitizeFirebaseKey(clientId);
+    import("https://www.gstatic.com/firebasejs/12.15.0/firebase-database.js").then(({ ref, set, onDisconnect }) => {
+        const userRef = ref(firebaseDB, `active_rooms/${roomId}/users/${cleanClientId}`);
         set(userRef, {
             username: activeName,
             color: userColor,
@@ -633,8 +661,9 @@ function registerFirebaseUser(roomId, clientId, userName, userColor) {
 
 function unregisterFirebaseUser(roomId, clientId) {
     if (!useFirebase || !firebaseDB || !roomId || !clientId) return;
-    import("https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js").then(({ ref, remove }) => {
-        const userRef = ref(firebaseDB, `active_rooms/${roomId}/users/${clientId}`);
+    const cleanClientId = sanitizeFirebaseKey(clientId);
+    import("https://www.gstatic.com/firebasejs/12.15.0/firebase-database.js").then(({ ref, remove }) => {
+        const userRef = ref(firebaseDB, `active_rooms/${roomId}/users/${cleanClientId}`);
         remove(userRef).catch(err => {
             console.warn("Firebase user cleanup skipped:", err.message);
         });

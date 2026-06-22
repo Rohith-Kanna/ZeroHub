@@ -1,0 +1,19 @@
+# Firebase local credentials
+frontend/web/firebase-config.js
+
+# IDEs and OS files
+.idea/
+.vscode/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Erlang build & test artifacts
+_build/
+rebar3.crashdump
+*.beam
+.rebar/
+erl_crash.dump
