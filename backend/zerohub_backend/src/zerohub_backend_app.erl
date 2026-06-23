@@ -16,10 +16,19 @@ start(_StartType, _StartArgs) ->
             {"/ws", ws_handler, []}
         ]}
     ]),
+    Port =
+    case os:getenv("PORT") of
+        false ->
+            8080;
+        Value ->
+            list_to_integer(Value)
+    end,
+
+io:format("Starting ZeroHub on port ~p~n", [Port]),
 
     {ok, _} = cowboy:start_clear(
         websocket_listener,
-        [{port, 8080}],
+        [{port, Port}],
         #{env => #{dispatch => Dispatch}}
     ),
     client_registry:start(),
