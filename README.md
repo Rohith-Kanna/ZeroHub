@@ -238,23 +238,6 @@ to explore:
 
 ---
 
-## Team
-
-### Rohith Kanna GV
-
-Backend Engineering • Erlang • WebSockets • Firebase Integration
-
-### Team Member
-
-Frontend Engineering • Monaco Editor • Yjs Integration • UI Development
-
----
-
-## License
-
-MIT License
-
----
 
 <div align="center">
 
