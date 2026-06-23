@@ -53,7 +53,7 @@ function setRoomActionState(pending) {
     const createBtn = document.getElementById('createRoomBtn');
     const joinBtn = document.getElementById('joinRoomBtn');
     const roomInput = document.getElementById('roomInput');
-    
+
     if (pending) {
         if (createBtn) createBtn.disabled = true;
         if (joinBtn) joinBtn.disabled = true;
@@ -117,20 +117,20 @@ async function initFirebase() {
         firebaseDB = getDatabase(firebaseApp);
         useFirebase = true;
         logActivity("SYS", "Connected to live registry");
-        
+
         // Listen to active rooms on Firebase
         const roomsRef = ref(firebaseDB, 'active_rooms');
         onValue(roomsRef, (snapshot) => {
             if (snapshot.exists()) {
                 const data = snapshot.val();
-                
+
                 // Clean up any empty rooms from RTDB after safety age window
                 import("https://www.gstatic.com/firebasejs/12.15.0/firebase-database.js").then(({ ref, remove }) => {
                     Object.keys(data).forEach(roomId => {
                         const age = Date.now() - (data[roomId].createdAt || 0);
                         if ((!data[roomId].users || Object.keys(data[roomId].users).length === 0) && age > 8000) {
                             const roomRef = ref(firebaseDB, `active_rooms/${roomId}`);
-                            remove(roomRef).catch(() => {});
+                            remove(roomRef).catch(() => { });
                             delete data[roomId];
                         }
                     });
@@ -174,7 +174,7 @@ function registerFirebaseUser(roomId, clientId, userName, userColor) {
             color: userColor,
             joinedAt: Date.now()
         }).then(() => {
-            onDisconnect(userRef).remove().catch(() => {});
+            onDisconnect(userRef).remove().catch(() => { });
         }).catch(err => {
             console.warn("Firebase user registration skipped:", err.message);
         });
@@ -201,18 +201,18 @@ function renderFirebaseRooms(roomsData) {
     if (!container) return;
     container.innerHTML = '';
     const roomIds = Object.keys(roomsData);
-    
+
     if (roomIds.length === 0) {
         container.innerHTML = '<div class="no-rooms-fallback">No active rooms found</div>';
         return;
     }
-    
+
     roomIds.forEach(roomId => {
         const item = document.createElement('div');
         item.className = 'discovery-item';
-        
+
         const count = roomsData[roomId].users ? Object.keys(roomsData[roomId].users).length : 0;
-        
+
         item.innerHTML = `
             <div>
                 <div class="discovery-item-title"># ${roomId}</div>
@@ -239,7 +239,7 @@ require.config({
 });
 
 // Setup Monaco and trigger startup
-require(['vs/editor/editor.main'], function() {
+require(['vs/editor/editor.main'], function () {
     // Define Hacker Green Theme
     monaco.editor.defineTheme('hackerTheme', {
         base: 'vs-dark',
@@ -306,14 +306,14 @@ require(['vs/editor/editor.main'], function() {
     editor.onDidChangeModelContent(event => {
         if (remoteUpdate) return;
         remoteUpdate = true;
-        
+
         // Push full contents to Yjs document to keep simple and robust
         const text = editor.getValue();
         doc.transact(() => {
             yText.delete(0, yText.length);
             yText.insert(0, text);
         }, 'local');
-        
+
         remoteUpdate = false;
     });
 
@@ -345,7 +345,7 @@ function connectWebSocket() {
     if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
         return;
     }
-    
+
     if (reconnectTimeout) {
         clearTimeout(reconnectTimeout);
         reconnectTimeout = null;
@@ -353,7 +353,7 @@ function connectWebSocket() {
 
     const statusDot = document.getElementById('statusDot');
     const sbConnection = document.getElementById('sbConnection');
-    
+
     if (isReconnecting) {
         if (statusDot) statusDot.className = 'status-dot connecting';
         if (sbConnection) sbConnection.textContent = 'RECONNECTING';
@@ -361,12 +361,27 @@ function connectWebSocket() {
         if (statusDot) statusDot.className = 'status-dot connecting';
         if (sbConnection) sbConnection.textContent = 'CONNECTING';
     }
-    
+
     try {
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsHost = window.location.hostname || 'localhost';
-        ws = new WebSocket(`${wsProtocol}//${wsHost}:8080/ws`);
-        
+        let WS_URL;
+
+        const host = window.location.hostname;
+
+        if (
+            host === "localhost" ||
+            host === "127.0.0.1" ||
+            host.startsWith("192.168.") ||
+            host.startsWith("10.")
+        ) {
+            WS_URL = `ws://${host}:8080/ws`;
+        } else {
+            WS_URL = "wss://zerohub-backend.onrender.com/ws";
+        }
+
+        console.log("Connecting to:", WS_URL);
+
+        ws = new WebSocket(WS_URL);
+
         ws.onopen = () => {
             isReconnecting = false;
             if (statusDot) {
@@ -374,11 +389,11 @@ function connectWebSocket() {
             }
             if (sbConnection) sbConnection.textContent = 'CONNECTED';
             logActivity('SYS', 'Connected to session router');
-            
+
             // Start ping diagnostic interval
             if (pingInterval) clearInterval(pingInterval);
             pingInterval = setInterval(sendPing, 4000);
-            
+
             // Re-join room if we had one
             if (currentRoomId) {
                 const validation = validateRoomCode(currentRoomId);
@@ -386,11 +401,11 @@ function connectWebSocket() {
                     joinRoom(validation.code);
                 }
             }
-            
+
             // Initialize Firebase Discovery mock
             refreshDiscoveryList();
         };
-        
+
         ws.onclose = () => {
             if (statusDot) {
                 statusDot.className = 'status-dot disconnected';
@@ -400,17 +415,17 @@ function connectWebSocket() {
             clearInterval(pingInterval);
             const latencyDiag = document.getElementById('diagnosticLatency');
             if (latencyDiag) latencyDiag.textContent = '(--ms)';
-            
+
             isReconnecting = true;
             if (!reconnectTimeout) {
                 reconnectTimeout = setTimeout(connectWebSocket, 3000);
             }
         };
-        
+
         ws.onerror = (err) => {
             console.warn("WebSocket connection error:", err);
         };
-        
+
         ws.onmessage = (event) => {
             try {
                 const msg = JSON.parse(event.data);
@@ -450,7 +465,7 @@ function handleWebSocketMessage(msg) {
         if (latencyDiag) latencyDiag.textContent = `(${latency}ms)`;
         return;
     }
-    
+
     switch (msg.type) {
         case 'joined':
             if (joinTimeout) {
@@ -458,7 +473,7 @@ function handleWebSocketMessage(msg) {
                 joinTimeout = null;
             }
             setRoomActionState(false);
-            
+
             // Clear editor content and reset Yjs doc on switching rooms
             if (currentRoomId && currentRoomId !== msg.roomId) {
                 unregisterFirebaseUser(currentRoomId, myClientId);
@@ -473,7 +488,7 @@ function handleWebSocketMessage(msg) {
             myColor = msg.color;
             myClientId = msg.clientId;
             currentRoomId = msg.roomId;
-            
+
             // Display Room
             const codeDisplay = document.getElementById('roomCodeDisplay');
             if (codeDisplay) codeDisplay.textContent = currentRoomId;
@@ -481,7 +496,7 @@ function handleWebSocketMessage(msg) {
             if (sbRoom) sbRoom.textContent = `ROOM: ${currentRoomId}`;
             const copyBtn = document.getElementById('copyRoomBtn');
             if (copyBtn) copyBtn.style.display = 'block';
-            
+
             // Update URL
             try {
                 const url = new URL(window.location);
@@ -490,15 +505,15 @@ function handleWebSocketMessage(msg) {
             } catch (e) {
                 console.warn("Could not update URL parameter:", e);
             }
-            
+
             logActivity('ROOM', `Joined room ${currentRoomId}`);
-            
+
             // Update Discovery fallback state
             addMockDiscoveryRoom(currentRoomId);
             publishRoomToFirebase(currentRoomId);
             registerFirebaseUser(currentRoomId, myClientId, username, myColor);
             break;
-            
+
         case 'yjs_init':
             if (msg.updates && msg.updates.length > 0) {
                 logActivity('YJS', `Syncing document state (${msg.updates.length} updates)...`);
@@ -514,7 +529,7 @@ function handleWebSocketMessage(msg) {
                 }
             }
             break;
-            
+
         case 'yjs_update':
             try {
                 const update = base64ToUint8Array(msg.update);
@@ -536,12 +551,12 @@ function handleWebSocketMessage(msg) {
                 console.error("Failed to apply yjs update:", e);
             }
             break;
-            
+
         case 'presence_list':
             currentCollaborators = msg.users;
             updateCollaborators(currentCollaborators);
             break;
-            
+
         case 'cursor':
             lastActivityTimes[msg.clientId] = Date.now();
             handleRemoteCursor(msg);
@@ -554,10 +569,10 @@ function updateCollaborators(users) {
     const list = document.getElementById('collabList');
     if (!list) return;
     list.innerHTML = '';
-    
+
     // Check joins & leaves for toasts
     const currentIds = new Set(users.map(u => u.clientId));
-    
+
     users.forEach(user => {
         if (!previousCollaboratorIds.has(user.clientId)) {
             if (myClientId && user.clientId !== myClientId) {
@@ -573,10 +588,10 @@ function updateCollaborators(users) {
     });
 
     previousCollaboratorIds = currentIds;
-    
+
     users.forEach(user => {
         const isSelf = user.clientId === myClientId;
-        
+
         // Active vs Idle detection (30s threshold)
         let status = 'online';
         if (!isSelf) {
@@ -588,11 +603,11 @@ function updateCollaborators(users) {
 
         const item = document.createElement('div');
         item.className = 'collab-item';
-        
+
         const initial = user.username ? user.username.charAt(0).toUpperCase() : 'H';
         const statusColor = status === 'idle' ? '#ffa500' : user.color;
         const statusText = status === 'idle' ? 'Idle' : 'Online';
-        
+
         item.innerHTML = `
             <div class="collab-info">
                 <div class="collab-avatar" style="background-color: ${user.color}15; border: 1px solid ${user.color}; color: ${user.color};">
@@ -610,7 +625,7 @@ function updateCollaborators(users) {
         `;
         list.appendChild(item);
     });
-    
+
     document.getElementById('activeUserCount').textContent = `${users.length} ${users.length === 1 ? 'USER' : 'USERS'}`;
     document.getElementById('sbUsers').textContent = `USERS: ${users.length}`;
 }
@@ -619,20 +634,20 @@ function updateCollaborators(users) {
 function handleRemoteCursor(msg) {
     const clientId = msg.clientId;
     if (clientId === myClientId) return;
-    
+
     // Save Yjs-to-WebSocket client ID mapping
     if (msg.position && msg.position.yjsClientId) {
         yjsToWsClientId[msg.position.yjsClientId] = clientId;
     }
-    
+
     // Remove existing cursor decoration if any
     if (remoteCursors[clientId] && remoteCursors[clientId].decorationId) {
         editor.removeDecorations([remoteCursors[clientId].decorationId]);
     }
-    
+
     // Render custom cursor decoration
     const cursorClassName = `collaborator-cursor-${clientId}`;
-    
+
     // Dynamically insert cursor styling for this collaborator's color
     let styleEl = document.getElementById(`style-${clientId}`);
     if (!styleEl) {
@@ -662,14 +677,14 @@ function handleRemoteCursor(msg) {
             transition: opacity 0.5s;
         }
     `;
-    
+
     const range = new monaco.Range(
         msg.position.lineNumber,
         msg.position.column,
         msg.position.lineNumber,
         msg.position.column
     );
-    
+
     const [decorId] = editor.deltaDecorations([], [
         {
             range: range,
@@ -679,7 +694,7 @@ function handleRemoteCursor(msg) {
             }
         }
     ]);
-    
+
     remoteCursors[clientId] = {
         lineNumber: msg.position.lineNumber,
         column: msg.position.column,
@@ -687,7 +702,7 @@ function handleRemoteCursor(msg) {
         color: msg.color,
         decorationId: decorId
     };
-    
+
     // Fade out cursor name label after inactivity
     setTimeout(() => {
         if (styleEl) {
@@ -719,13 +734,13 @@ function handleRemoteCursor(msg) {
 function showTypingIndicator(clientId) {
     const el = document.getElementById(`typing-${clientId}`);
     if (!el) return;
-    
+
     el.style.display = 'inline';
-    
+
     if (typingTimeouts[clientId]) {
         clearTimeout(typingTimeouts[clientId]);
     }
-    
+
     typingTimeouts[clientId] = setTimeout(() => {
         el.style.display = 'none';
     }, 2000);
@@ -793,7 +808,7 @@ function setupUIHandlers() {
             }
         });
     }
-    
+
     // Create Room
     const createBtn = document.getElementById('createRoomBtn');
     if (createBtn) {
@@ -803,7 +818,7 @@ function setupUIHandlers() {
             joinRoom(randCode);
         });
     }
-    
+
     // Join Room
     const joinBtn = document.getElementById('joinRoomBtn');
     if (joinBtn) {
@@ -816,7 +831,7 @@ function setupUIHandlers() {
             }
         });
     }
-    
+
     // Copy Link
     const copyBtn = document.getElementById('copyRoomBtn');
     if (copyBtn) {
@@ -832,7 +847,7 @@ function setupUIHandlers() {
             });
         });
     }
-    
+
     // Language Select
     const langSelect = document.getElementById('languageSelect');
     if (langSelect) {
@@ -847,7 +862,7 @@ function setupUIHandlers() {
             }
         });
     }
-    
+
     // Theme Select
     const themeSelect = document.getElementById('themeSelect');
     if (themeSelect) {
@@ -894,20 +909,20 @@ function joinRoom(roomId) {
         showToast(validation.reason);
         return;
     }
-    
+
     if (!ws || ws.readyState !== WebSocket.OPEN) {
         logActivity('ERR', 'No server connection. Retrying...');
         currentRoomId = validation.code;
         return;
     }
-    
+
     setRoomActionState(true);
     if (joinTimeout) clearTimeout(joinTimeout);
     joinTimeout = setTimeout(() => {
         setRoomActionState(false);
         showToast("Join request timed out. Please try again.");
     }, 6000);
-    
+
     const activeName = username || 'Anonymous';
     try {
         ws.send(JSON.stringify({
@@ -976,11 +991,11 @@ function showToast(msg) {
     toast.className = 'toast';
     toast.textContent = msg;
     container.appendChild(toast);
-    
+
     setTimeout(() => {
         toast.classList.add('show');
     }, 10);
-    
+
     setTimeout(() => {
         toast.classList.remove('show');
         setTimeout(() => {
@@ -1003,17 +1018,17 @@ function refreshDiscoveryList() {
     const container = document.getElementById('discoveryList');
     if (!container) return;
     container.innerHTML = '';
-    
+
     const keys = Object.keys(mockActiveRooms);
     if (keys.length === 0) {
         container.innerHTML = '<div class="no-rooms-fallback">No active rooms found</div>';
         return;
     }
-    
+
     keys.sort((a, b) => mockActiveRooms[b].time - mockActiveRooms[a].time).forEach(roomId => {
         const item = document.createElement('div');
         item.className = 'discovery-item';
-        
+
         item.innerHTML = `
             <div>
                 <div class="discovery-item-title"># ${roomId}</div>
